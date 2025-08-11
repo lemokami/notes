@@ -17,13 +17,17 @@
     /* Whole page is the input */
     #pad {
       position: fixed;
-      inset: 0; /* full screen */
+      inset: 0;
+      margin: auto; /* centers when width is constrained */
+      max-width: 800px; /* or any preferred width */
+      width: 100%; /* still responsive */
       padding: 24px 28px;
       outline: none;
       white-space: pre-wrap;
       word-break: break-word;
-      overflow: auto; /* allow long notes */
+      overflow: auto;
     }
+    
     ::selection { background: rgba(71, 255, 156, 0.25); }
     /* Starfield canvas behind the editor */
     canvas#stars {
