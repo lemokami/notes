@@ -9,54 +9,524 @@
     * { box-sizing: border-box; }
     body {
       background: #000;
-      color: #fff; /* normal white font color */
-      font: 17px/1.7 monospace; /* monospace type */
+      color: #fff;
+      font: 17px/1.7 monospace;
       caret-color: #47ff9c;
-      overflow: hidden; /* canvas + full-bleed editor */
+      overflow: hidden;
     }
-    /* Whole page is the input */
+    ::selection { background: rgba(71, 255, 156, 0.25); }
+
+    #app {
+      display: flex;
+      height: 100%;
+    }
+
+    /* ---- Sidebar ---- */
+    #sidebar {
+      flex: none;
+      width: 260px;
+      border-right: 1px solid rgba(255, 255, 255, 0.12);
+      display: flex;
+      flex-direction: column;
+      padding: 16px 12px;
+      overflow: hidden;
+    }
+    .sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding: 0 4px;
+    }
+    .sidebar-title {
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      opacity: 0.5;
+      text-transform: uppercase;
+    }
+    #new-note-btn {
+      background: rgba(71, 255, 156, 0.12);
+      color: #47ff9c;
+      border: 1px solid rgba(71, 255, 156, 0.4);
+      border-radius: 6px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+    }
+    #new-note-btn:hover { background: rgba(71, 255, 156, 0.22); }
+
+    #note-list {
+      overflow-y: auto;
+      flex: 1;
+    }
+    .note-card {
+      position: relative;
+      padding: 8px 28px 8px 10px;
+      border-radius: 8px;
+      margin-bottom: 4px;
+      cursor: pointer;
+    }
+    .note-card:hover { background: rgba(255, 255, 255, 0.06); }
+    .note-card.active { background: rgba(71, 255, 156, 0.12); }
+    .note-card .title {
+      font-weight: bold;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .note-card .preview {
+      font-size: 12px;
+      opacity: 0.55;
+      margin-top: 2px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .note-card .delete-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      opacity: 0;
+      background: none;
+      border: none;
+      color: #ff6b6b;
+      cursor: pointer;
+      font-size: 13px;
+      padding: 2px 4px;
+      line-height: 1;
+    }
+    .note-card:hover .delete-btn { opacity: 0.6; }
+    .note-card .delete-btn:hover { opacity: 1; }
+
+    /* ---- Editor ---- */
+    #editor-wrap {
+      flex: 1;
+      overflow: auto;
+    }
     #pad {
-      position: fixed;
-      inset: 0;
-      margin: auto; /* centers when width is constrained */
-      max-width: 800px; /* or any preferred width */
-      width: 100%; /* still responsive */
+      max-width: 760px;
+      margin: 0 auto;
       padding: 24px 28px;
       outline: none;
       white-space: pre-wrap;
       word-break: break-word;
-      overflow: auto;
+      min-height: 100%;
     }
-    
-    ::selection { background: rgba(71, 255, 156, 0.25); }
-    /* Starfield canvas behind the editor */
-    canvas#stars {
-      position: fixed;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      z-index: -1; /* behind pad */
+    #pad div { min-height: 1.7em; }
+    #pad h1, #pad h2, #pad h3 { margin: 0.5em 0 0.25em; line-height: 1.3; }
+    #pad h1 { font-size: 1.6em; }
+    #pad h2 { font-size: 1.3em; }
+    #pad h3 { font-size: 1.1em; }
+    #pad blockquote {
+      margin: 0.4em 0;
+      padding-left: 12px;
+      border-left: 3px solid rgba(255, 255, 255, 0.3);
+      opacity: 0.85;
     }
+    #pad code {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-family: inherit;
+    }
+    #pad ul, #pad ol { margin: 0.3em 0; padding-left: 1.4em; }
   </style>
 </head>
 <body>
-  <!-- <canvas id="stars"></canvas> -->
-  <div id="pad" contenteditable="true" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></div>
+  <div id="app">
+    <div id="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">Notes</span>
+        <button id="new-note-btn" type="button">+ New</button>
+      </div>
+      <div id="note-list"></div>
+    </div>
+    <div id="editor-wrap">
+      <div id="pad" contenteditable="true" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"></div>
+    </div>
+  </div>
 
   <script>
-    /**
-     * Focus and basic typing UX (Tab inserts a tab; page always focused).
-     * @returns {void}
-     */
-    function boot() {
-      const pad = document.getElementById('pad');
-      pad.focus();
-      document.addEventListener('click', () => pad.focus());
-      pad.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Tab') {
-          ev.preventDefault();
-          document.execCommand('insertText', false, '\t');
-        }
+    const STORAGE_KEY = 'padnotes.v1';
+    const pad = document.getElementById('pad');
+    const noteList = document.getElementById('note-list');
+    const newNoteBtn = document.getElementById('new-note-btn');
+
+    // ---- Storage ----
+    /** @returns {{notes: Array, activeId: string}|null} */
+    function loadState() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || !Array.isArray(parsed.notes)) return null;
+        return parsed;
+      } catch {
+        return null;
+      }
+    }
+
+    function saveState() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch {}
+    }
+
+    function createNote() {
+      const now = Date.now();
+      return {
+        id: 'n' + now.toString(36) + Math.random().toString(36).slice(2, 8),
+        html: '<div><br></div>',
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+
+    let state = loadState();
+    if (!state || !state.notes.length) {
+      const n = createNote();
+      state = { notes: [n], activeId: n.id };
+    }
+    if (!state.notes.some((n) => n.id === state.activeId)) {
+      state.activeId = state.notes[0].id;
+    }
+
+    // ---- Deriving title/preview from stored HTML ----
+    function deriveTitlePreview(html) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      const blocks = [];
+      tmp.childNodes.forEach((node) => {
+        const t = (node.textContent || '').trim();
+        if (t) blocks.push(t);
       });
+      const title = blocks[0] ? blocks[0].slice(0, 60) : 'Untitled';
+      const preview = blocks.slice(1).join(' ').slice(0, 140);
+      return { title, preview };
+    }
+
+    // ---- Sidebar rendering ----
+    function renderSidebar() {
+      noteList.innerHTML = '';
+      const sorted = [...state.notes].sort((a, b) => b.updatedAt - a.updatedAt);
+      for (const note of sorted) {
+        const { title, preview } = deriveTitlePreview(note.html);
+        const card = document.createElement('div');
+        card.className = 'note-card' + (note.id === state.activeId ? ' active' : '');
+        card.dataset.id = note.id;
+
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'delete-btn';
+        del.title = 'Delete note';
+        del.textContent = '✕';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'title';
+        titleEl.textContent = title;
+
+        const previewEl = document.createElement('div');
+        previewEl.className = 'preview';
+        previewEl.textContent = preview;
+
+        card.append(del, titleEl, previewEl);
+        card.addEventListener('click', () => switchNote(note.id));
+        del.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          deleteNote(note.id);
+        });
+
+        noteList.appendChild(card);
+      }
+    }
+
+    // ---- Note switching / lifecycle ----
+    function placeCaretAtEnd(el) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+
+    function loadActiveNote() {
+      const note = state.notes.find((n) => n.id === state.activeId);
+      pad.innerHTML = note ? note.html : '<div><br></div>';
+      pad.focus();
+      placeCaretAtEnd(pad);
+    }
+
+    function switchNote(id) {
+      if (id === state.activeId) {
+        pad.focus();
+        return;
+      }
+      state.activeId = id;
+      loadActiveNote();
+      saveState();
+      renderSidebar();
+    }
+
+    function newNote() {
+      const note = createNote();
+      state.notes.unshift(note);
+      state.activeId = note.id;
+      loadActiveNote();
+      saveState();
+      renderSidebar();
+    }
+
+    function deleteNote(id) {
+      if (state.notes.length === 1) {
+        const note = state.notes[0];
+        note.html = '<div><br></div>';
+        note.updatedAt = Date.now();
+        if (id === state.activeId) loadActiveNote();
+        saveState();
+        renderSidebar();
+        return;
+      }
+      const idx = state.notes.findIndex((n) => n.id === id);
+      if (idx === -1) return;
+      state.notes.splice(idx, 1);
+      if (state.activeId === id) {
+        state.activeId = state.notes[0].id;
+        loadActiveNote();
+      }
+      saveState();
+      renderSidebar();
+    }
+
+    let saveTimer = null;
+    function scheduleSave() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        const note = state.notes.find((n) => n.id === state.activeId);
+        if (!note) return;
+        note.html = pad.innerHTML;
+        note.updatedAt = Date.now();
+        saveState();
+        renderSidebar();
+      }, 400);
+    }
+
+    newNoteBtn.addEventListener('click', newNote);
+
+    // ---- Markdown-as-you-type ----
+
+    /**
+     * The block-level element (or bare top-level text node) containing `node`.
+     * Stops at the nearest block-level ancestor rather than assuming blocks
+     * are always direct children of #pad, since execCommand can nest a
+     * fresh <div> inside another (e.g. right after exiting a list).
+     */
+    const BLOCK_TAGS = new Set(['DIV', 'H1', 'H2', 'H3', 'BLOCKQUOTE', 'LI', 'P']);
+    function getBlockElement(node) {
+      while (node) {
+        if (node.parentNode === pad) return node;
+        if (node.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has(node.tagName)) return node;
+        node = node.parentNode;
+      }
+      return null;
+    }
+
+    function getRangeForOffsets(blockEl, start, end) {
+      if (blockEl.nodeType === Node.TEXT_NODE) {
+        const r = document.createRange();
+        r.setStart(blockEl, start);
+        r.setEnd(blockEl, end);
+        return r;
+      }
+      const walker = document.createTreeWalker(blockEl, NodeFilter.SHOW_TEXT, null);
+      let node, pos = 0;
+      let startNode, startOffset, endNode, endOffset;
+      while ((node = walker.nextNode())) {
+        const len = node.textContent.length;
+        if (startNode === undefined && pos + len >= start) {
+          startNode = node;
+          startOffset = start - pos;
+        }
+        if (endNode === undefined && pos + len >= end) {
+          endNode = node;
+          endOffset = end - pos;
+        }
+        pos += len;
+        if (startNode !== undefined && endNode !== undefined) break;
+      }
+      if (startNode === undefined || endNode === undefined) return null;
+      const r = document.createRange();
+      r.setStart(startNode, startOffset);
+      r.setEnd(endNode, endOffset);
+      return r;
+    }
+
+    // Block-level: triggered by the space that completes a line-start prefix.
+    // Runs after the space lands in the DOM (rather than preventing it in
+    // beforeinput) because calling execCommand synchronously inside a
+    // prevented beforeinput handler is unreliable in some browsers.
+    function handleBlockMarkdown() {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return false;
+      const range = sel.getRangeAt(0);
+      if (!range.collapsed) return false;
+      const blockEl = getBlockElement(range.startContainer);
+      if (!blockEl) return false;
+
+      const preRange = document.createRange();
+      preRange.setStart(blockEl, 0);
+      preRange.setEnd(range.startContainer, range.startOffset);
+      const textBefore = preRange.toString();
+
+      let formatTag = null;
+      let listCommand = null;
+      if (/^#{1,3} $/.test(textBefore)) {
+        formatTag = '<h' + (textBefore.length - 1) + '>';
+      } else if (/^> $/.test(textBefore)) {
+        formatTag = '<blockquote>';
+      } else if (/^[-*] $/.test(textBefore)) {
+        listCommand = 'insertUnorderedList';
+      } else if (/^\d+\. $/.test(textBefore)) {
+        listCommand = 'insertOrderedList';
+      } else {
+        return false;
+      }
+
+      preRange.deleteContents();
+      // deleteContents() can leave a dangling empty text node behind, and
+      // the selection stays anchored to it. formatBlock behaves differently
+      // (nests a fresh block) when the anchor is a text node instead of the
+      // element itself, so clean it up and re-anchor directly on blockEl.
+      if (blockEl.nodeType === Node.ELEMENT_NODE) {
+        Array.from(blockEl.childNodes).forEach((n) => {
+          if (n.nodeType === Node.TEXT_NODE && n.textContent === '') n.remove();
+        });
+        if (!blockEl.hasChildNodes()) {
+          blockEl.appendChild(document.createElement('br'));
+        }
+        const caretRange = document.createRange();
+        caretRange.setStart(blockEl, 0);
+        caretRange.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(caretRange);
+      }
+      // Deferred: calling execCommand synchronously from within the 'input'
+      // handler that a text-insertion command itself triggered is unreliable
+      // (the browser can silently no-op or mis-nest the new block). Running
+      // it on the next tick, once the triggering command has fully unwound,
+      // avoids that reentrancy.
+      setTimeout(() => {
+        if (formatTag) document.execCommand('formatBlock', false, formatTag);
+        else document.execCommand(listCommand);
+        scheduleSave();
+      }, 0);
+      return true;
+    }
+
+    // Inline: **bold**, *italic*, _italic_, `code`, ~~strike~~
+    const INLINE_RULES = [
+      { re: /\*\*([^*\s][^*]*)\*\*$/, tag: 'strong' },
+      { re: /__([^_\s][^_]*)__$/, tag: 'strong' },
+      { re: /(?<!\*)\*([^*\s][^*]*)\*$/, tag: 'em' },
+      { re: /(?<!_)_([^_\s][^_]*)_$/, tag: 'em' },
+      { re: /`([^`]+)`$/, tag: 'code' },
+      { re: /~~([^~]+)~~$/, tag: 's' },
+    ];
+
+    function handleInlineMarkdown() {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return;
+      const range = sel.getRangeAt(0);
+      if (!range.collapsed) return;
+      const blockEl = getBlockElement(range.startContainer);
+      if (!blockEl) return;
+
+      const preRange = document.createRange();
+      preRange.setStart(blockEl, 0);
+      preRange.setEnd(range.startContainer, range.startOffset);
+      const textBefore = preRange.toString();
+
+      for (const rule of INLINE_RULES) {
+        const m = textBefore.match(rule.re);
+        if (!m) continue;
+        const matchStart = textBefore.length - m[0].length;
+        const matchEnd = textBefore.length;
+        const targetRange = getRangeForOffsets(blockEl, matchStart, matchEnd);
+        if (!targetRange) continue;
+
+        targetRange.deleteContents();
+        const el = document.createElement(rule.tag);
+        el.textContent = m[1];
+        targetRange.insertNode(el);
+
+        const spacer = document.createTextNode('​');
+        el.after(spacer);
+        const newRange = document.createRange();
+        newRange.setStart(spacer, 1);
+        newRange.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(newRange);
+        return;
+      }
+    }
+
+    pad.addEventListener('input', () => {
+      const didBlock = handleBlockMarkdown();
+      if (!didBlock) handleInlineMarkdown();
+      scheduleSave();
+    });
+
+    const EXIT_ON_ENTER_TAGS = new Set(['H1', 'H2', 'H3', 'BLOCKQUOTE']);
+
+    // Splits blockEl at the caret, moving everything from the caret onward
+    // into a new plain <div> placed right after it. Chrome's native Enter
+    // handling inside a heading/blockquote can produce invalid nesting
+    // (a <div> nested inside an <h1>), so this is handled explicitly —
+    // mirrors Notion: Enter inside a heading exits to a normal paragraph.
+    function splitBlockToParagraph(blockEl, range) {
+      const newDiv = document.createElement('div');
+      const tailRange = document.createRange();
+      tailRange.setStart(range.startContainer, range.startOffset);
+      tailRange.setEnd(blockEl, blockEl.childNodes.length);
+      newDiv.appendChild(tailRange.extractContents());
+      if (!newDiv.textContent) newDiv.innerHTML = '<br>';
+      blockEl.after(newDiv);
+
+      const caretRange = document.createRange();
+      caretRange.setStart(newDiv, 0);
+      caretRange.collapse(true);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(caretRange);
+    }
+
+    pad.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Tab') {
+        ev.preventDefault();
+        document.execCommand('insertText', false, '\t');
+        return;
+      }
+      if (ev.key === 'Enter' && !ev.shiftKey) {
+        const sel = window.getSelection();
+        if (!sel.rangeCount) return;
+        const range = sel.getRangeAt(0);
+        if (!range.collapsed) return;
+        const blockEl = getBlockElement(range.startContainer);
+        if (blockEl && blockEl.nodeType === Node.ELEMENT_NODE && EXIT_ON_ENTER_TAGS.has(blockEl.tagName)) {
+          ev.preventDefault();
+          splitBlockToParagraph(blockEl, range);
+          scheduleSave();
+        }
+      }
+    });
+
+    // ---- Boot ----
+    function boot() {
+      renderSidebar();
+      loadActiveNote();
     }
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', boot);
@@ -64,177 +534,8 @@
       boot();
     }
 
-    // ---- Space warp starfield ----
-    const canvas = document.getElementById('stars');
-    const ctx = canvas.getContext('2d');
-
-    /**
-     * @typedef {Object} Star
-     * @property {number} x - Current x position.
-     * @property {number} y - Current y position.
-     * @property {number} px - Previous x position (for streaks).
-     * @property {number} py - Previous y position (for streaks).
-     * @property {number} s - Base outward speed.
-     * @property {number} r - Render radius when idle.
-     */
-
-    /** @type {Star[]} */
-    let stars = [];
-    let width = 0, height = 0, cx = 0, cy = 0;
-    let prevWidth = 0, prevHeight = 0;
-
-    /** Space-warp impulse. Increased on typing, eased every frame. */
-    let warp = 0; // dynamic boost
-    const WARP_MAX = 18;
-    const WARP_IMPULSE = 5.5;
-    const WARP_DECAY = 0.90; // per-frame multiplier
-
-    /**
-     * Resize the canvas without restarting the starfield.
-     * - First time: seed stars.
-     * - Later resizes: scale existing star positions; add/remove to match density.
-     * This prevents the animation from restarting on soft viewport changes (e.g., virtual keyboard).
-     * @returns {void}
-     */
-    function resize() {
-      const newW = window.innerWidth;
-      const newH = window.innerHeight;
-
-      // Handle device pixel ratio cleanly (keeps streaks crisp on HiDPI)
-      const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-      canvas.width = Math.floor(newW * dpr);
-      canvas.height = Math.floor(newH * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      // Compute logical size used for our math
-      width = newW; height = newH;
-      const oldW = prevWidth || width;
-      const oldH = prevHeight || height;
-      prevWidth = width; prevHeight = height;
-
-      const targetCount = Math.round((width * height) / 9000); // density scales with screen
-
-      if (stars.length === 0) {
-        // Initial seed only once
-        cx = width / 2; cy = height / 2;
-        stars = Array.from({ length: targetCount }, seedStar);
-        return;
-      }
-
-      // Scale existing positions to preserve motion feel
-      const sx = oldW ? width / oldW : 1;
-      const sy = oldH ? height / oldH : 1;
-      for (let i = 0; i < stars.length; i++) {
-        const st = stars[i];
-        st.x *= sx; st.y *= sy; st.px *= sx; st.py *= sy;
-      }
-      cx = width / 2; cy = height / 2;
-
-      // Adjust star count smoothly without full reseed
-      if (stars.length < targetCount) {
-        const add = targetCount - stars.length;
-        for (let i = 0; i < add; i++) stars.push(seedStar());
-      } else if (stars.length > targetCount) {
-        stars.length = targetCount;
-      }
-    }
-
-    /**
-     * Create a new star near the center with a tiny random offset.
-     * @returns {Star}
-     */
-    function seedStar() {
-      const angle = Math.random() * Math.PI * 2;
-      const radius = Math.random() * 40; // start close to center
-      const x = cx + Math.cos(angle) * radius;
-      const y = cy + Math.sin(angle) * radius;
-      return {
-        x, y, px: x, py: y,
-        s: 0.3 + Math.random() * 0.7, // base drift speed
-        r: Math.random() * 1.4 + 0.2
-      };
-    }
-
-    window.addEventListener('resize', resize);
-    resize();
-
-    /**
-     * Step physics and render one frame.
-     * Stars drift outward from the center; on typing, warp increases and
-     * we render streaks to simulate hyperspace.
-     * @returns {void}
-     */
-    function frame() {
-      // Ease warp boost toward 0
-      warp *= WARP_DECAY;
-      if (warp < 0.05) warp = 0;
-
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, width, height);
-
-      const streak = warp > 0.5;
-
-      for (let i = 0; i < stars.length; i++) {
-        const st = stars[i];
-        st.px = st.x; st.py = st.y;
-
-        // Direction from center
-        const dx = st.x - cx;
-        const dy = st.y - cy;
-        const dist = Math.hypot(dx, dy) || 1;
-        const ux = dx / dist;
-        const uy = dy / dist;
-
-        // Speed grows with warp; tiny parallax via 1 + dist * 0.0006
-        const v = (st.s + warp) * (1 + dist * 0.0006);
-        st.x += ux * v;
-        st.y += uy * v;
-
-        // Respawn when out of bounds with margin
-        if (st.x < -50 || st.x > width + 50 || st.y < -50 || st.y > height + 50) {
-          stars[i] = seedStar();
-          continue;
-        }
-
-        if (streak) {
-          // Draw streak from previous point to current
-          ctx.beginPath();
-          ctx.moveTo(st.px, st.py);
-          ctx.lineTo(st.x, st.y);
-          ctx.lineWidth = Math.min(2.2, 0.2 + warp * 0.08);
-          ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-          ctx.stroke();
-        } else {
-          // Idle tiny dot
-          ctx.beginPath();
-          ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2);
-          ctx.fillStyle = '#fff';
-          ctx.fill();
-        }
-      }
-
-      requestAnimationFrame(frame);
-    }
-    requestAnimationFrame(frame);
-
-    /**
-     * Bump the warp when the user types.
-     * @returns {void}
-     */
-    function onTypeWarp() {
-      warp = Math.min(WARP_MAX, warp + WARP_IMPULSE);
-    }
-
-    // Hook into input on the contenteditable surface
-    document.getElementById('pad').addEventListener('input', onTypeWarp);
-
     // ---- Minimal in-page test harness (console only) ----
     (function runTests() {
-      /**
-       * Basic assert helper.
-       * @param {string} name - Test name.
-       * @param {() => boolean} fn - Predicate returning true when the test passes.
-       */
       function test(name, fn) {
         try {
           const ok = fn();
@@ -245,27 +546,23 @@
         }
       }
 
-      // 1) Elements exist
       test('pad exists', () => !!document.getElementById('pad'));
-      test('stars canvas exists', () => !!document.getElementById('stars'));
-
-      // 2) Resize does not reseed/restart starfield when size unchanged
-      test('resize preserves star array identity with same size', () => {
-        const ref = stars;
-        const len = stars.length;
-        resize();
-        return stars === ref && stars.length === len && len > 0;
+      test('sidebar exists', () => !!document.getElementById('sidebar'));
+      test('state has at least one note', () => state.notes.length >= 1);
+      test('deriveTitlePreview splits title/preview', () => {
+        const { title, preview } = deriveTitlePreview('<div>Hello world</div><div>more text here</div>');
+        return title === 'Hello world' && preview === 'more text here';
       });
-
-      // 3) Typing warp increases momentum
-      test('onTypeWarp increases warp', () => {
-        const before = warp;
-        onTypeWarp();
-        return warp > before;
+      test('deriveTitlePreview falls back to Untitled', () => {
+        const { title } = deriveTitlePreview('<div><br></div>');
+        return title === 'Untitled';
       });
-
-      // 4) Frame loop scheduled
-      test('animation frame loop scheduled', () => typeof requestAnimationFrame === 'function');
+      test('storage round-trips', () => {
+        const before = localStorage.getItem(STORAGE_KEY);
+        saveState();
+        const after = localStorage.getItem(STORAGE_KEY);
+        return typeof after === 'string' && after.length > 0 && JSON.parse(after).notes.length === state.notes.length;
+      });
     })();
   </script>
 </body>
