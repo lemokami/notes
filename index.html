@@ -4,17 +4,46 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Notebook</title>
+  <script>
+    try {
+      const saved = localStorage.getItem('padnotes.theme');
+      if (saved === 'light' || saved === 'dark') document.documentElement.dataset.theme = saved;
+    } catch {}
+  </script>
   <style>
+    :root {
+      --bg: #ece9e4;
+      --fg: #2a2a28;
+      --ink: 0, 0, 0;
+      --danger: #9a4b3f;
+      color-scheme: light;
+    }
+    :root[data-theme="dark"] {
+      --bg: #1c1b1a;
+      --fg: #e6e3de;
+      --ink: 255, 255, 255;
+      --danger: #d98a7c;
+      color-scheme: dark;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #1c1b1a;
+        --fg: #e6e3de;
+        --ink: 255, 255, 255;
+        --danger: #d98a7c;
+        color-scheme: dark;
+      }
+    }
     html, body { height: 100%; margin: 0; }
     * { box-sizing: border-box; }
     body {
-      background: #ece9e4;
-      color: #2a2a28;
+      background: var(--bg);
+      color: var(--fg);
       font: 17px/1.7 monospace;
-      caret-color: #2a2a28;
+      caret-color: var(--fg);
       overflow: hidden;
     }
-    ::selection { background: rgba(0, 0, 0, 0.14); }
+    ::selection { background: rgba(var(--ink), 0.14); }
 
     #app {
       display: flex;
@@ -25,7 +54,7 @@
     #sidebar {
       flex: none;
       width: 260px;
-      border-right: 1px solid rgba(0, 0, 0, 0.1);
+      border-right: 1px solid rgba(var(--ink), 0.1);
       display: flex;
       flex-direction: column;
       padding: 16px 12px;
@@ -44,17 +73,18 @@
       opacity: 0.5;
       text-transform: uppercase;
     }
-    #new-note-btn {
-      background: rgba(0, 0, 0, 0.05);
-      color: #2a2a28;
-      border: 1px solid rgba(0, 0, 0, 0.25);
+    .header-actions { display: flex; gap: 6px; }
+    #new-note-btn, #theme-btn {
+      background: rgba(var(--ink), 0.05);
+      color: var(--fg);
+      border: 1px solid rgba(var(--ink), 0.25);
       border-radius: 6px;
       padding: 4px 10px;
       cursor: pointer;
       font: inherit;
       font-size: 13px;
     }
-    #new-note-btn:hover { background: rgba(0, 0, 0, 0.1); }
+    #new-note-btn:hover, #theme-btn:hover { background: rgba(var(--ink), 0.1); }
 
     #note-list {
       overflow-y: auto;
@@ -67,8 +97,8 @@
       margin-bottom: 4px;
       cursor: pointer;
     }
-    .note-card:hover { background: rgba(0, 0, 0, 0.05); }
-    .note-card.active { background: rgba(0, 0, 0, 0.09); }
+    .note-card:hover { background: rgba(var(--ink), 0.05); }
+    .note-card.active { background: rgba(var(--ink), 0.09); }
     .note-card .title {
       font-weight: bold;
       font-size: 14px;
@@ -92,7 +122,7 @@
       opacity: 0;
       background: none;
       border: none;
-      color: #9a4b3f;
+      color: var(--danger);
       cursor: pointer;
       font-size: 13px;
       padding: 2px 4px;
@@ -123,11 +153,11 @@
     #pad blockquote {
       margin: 0.4em 0;
       padding-left: 12px;
-      border-left: 3px solid rgba(0, 0, 0, 0.15);
+      border-left: 3px solid rgba(var(--ink), 0.15);
       opacity: 0.75;
     }
     #pad code {
-      background: rgba(0, 0, 0, 0.06);
+      background: rgba(var(--ink), 0.06);
       padding: 1px 5px;
       border-radius: 4px;
       font-family: inherit;
@@ -140,7 +170,10 @@
     <div id="sidebar">
       <div class="sidebar-header">
         <span class="sidebar-title">Notes</span>
-        <button id="new-note-btn" type="button">+ New</button>
+        <div class="header-actions">
+          <button id="theme-btn" type="button" title="Toggle dark mode" aria-label="Toggle dark mode"></button>
+          <button id="new-note-btn" type="button">+ New</button>
+        </div>
       </div>
       <div id="note-list"></div>
     </div>
@@ -319,6 +352,32 @@
     }
 
     newNoteBtn.addEventListener('click', newNote);
+
+    // ---- Theme ----
+    const THEME_KEY = 'padnotes.theme';
+    const themeBtn = document.getElementById('theme-btn');
+    const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+    function currentTheme() {
+      const explicit = document.documentElement.dataset.theme;
+      if (explicit) return explicit;
+      return systemDark.matches ? 'dark' : 'light';
+    }
+
+    function renderThemeBtn() {
+      themeBtn.textContent = currentTheme() === 'dark' ? '\u2600' : '\u263E';
+    }
+
+    renderThemeBtn();
+    systemDark.addEventListener('change', renderThemeBtn);
+
+    themeBtn.addEventListener('click', () => {
+      const next = currentTheme() === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem(THEME_KEY, next); } catch {}
+      renderThemeBtn();
+      pad.focus();
+    });
 
     // ---- Markdown-as-you-type ----
 
